@@ -17,6 +17,7 @@
 #include <vector>
 
 using process_info = std::tuple<pid_t, timeval>;
+using bg_task = std::tuple<int, process_info>;
 
 process_info launch_cmd(std::vector<std::string> args)
 {
@@ -111,14 +112,16 @@ int main(int /* argc */, char* /* argv */[])
 	timeval start;
 	gettimeofday(&start, nullptr);
 
-	// std::vector<std::string> args = {"ls", "-lahF"};
+	auto bg_tasks = std::vector<bg_task>();
+	int next_task_id = 0;
 
 	bool quit = false;
-	while (!quit)
+	while (not quit)
 	{
 		std::string line;
 		std::cout << get_current_dir_name() << "> ";
-		if (!std::getline(std::cin, line) || line == "exit")
+		std::cout.flush();
+		if (not std::getline(std::cin, line) || line == "exit")
 		{
 			std::cout << std::endl;
 			quit = true;
@@ -141,9 +144,21 @@ int main(int /* argc */, char* /* argv */[])
 
 			if (not args.empty())
 			{
-				if (args[0] == "cd")
+				if (args.back() == "&")
+				{
+					args.pop_back();
+					bg_tasks.push_back(bg_task(next_task_id++, launch_cmd(args)));
+				}
+				else if (args[0] == "cd")
 				{
 					cd(args[1]);
+				}
+				else if (args[0] == "aptaches")
+				{
+					for (auto x : bg_tasks)
+					{
+						std::cout << "[" << std::get<0>(x) << "] " << std::get<0>(std::get<1>(x)) << "\n";
+					}
 				}
 				else
 				{
