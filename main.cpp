@@ -98,6 +98,14 @@ int wait_cmd(process_info process)
 	return -1;
 }
 
+void cd(std::string dir)
+{
+	if (chdir(dir.c_str()) == -1)
+	{
+		std::cout << strerror(errno) << "\n";
+	}
+}
+
 int main(int /* argc */, char* /* argv */[])
 {
 	timeval start;
@@ -109,9 +117,10 @@ int main(int /* argc */, char* /* argv */[])
 	while (!quit)
 	{
 		std::string line;
-		std::cout << "Log710H2014%> ";
+		std::cout << get_current_dir_name() << "> ";
 		if (!std::getline(std::cin, line) || line == "exit")
 		{
+			std::cout << std::endl;
 			quit = true;
 		}
 		else
@@ -129,8 +138,20 @@ int main(int /* argc */, char* /* argv */[])
 				args.emplace_back(begin, result);
 				begin = std::find_if_not(result, end, is_whitespace);
 			}
-			wait_cmd(launch_cmd(args));
+
+			if (not args.empty())
+			{
+				if (args[0] == "cd")
+				{
+					cd(args[1]);
+				}
+				else
+				{
+					wait_cmd(launch_cmd(args));
+				}
+			}
 		}
 	}
+
 }
 
