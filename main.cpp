@@ -12,12 +12,58 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <ostream>
 #include <string>
 #include <tuple>
 #include <vector>
 
 using process_info = std::tuple<pid_t, timeval>;
 using bg_task = std::tuple<int, process_info>;
+
+std::ostream& operator<<(std::ostream& out, const bg_task& t)
+{
+    out << "[" << std::get<0>(t) << "] " << std::get<0>(std::get<1>(t)) << "\n";
+    return out;
+}
+
+int wait_cmd(process_info process)
+{
+	int status;
+	if (-1 == waitpid(std::get<0>(process), &status, 0))
+	{
+		std::cerr << "Error on wait(): " << strerror(errno) << "\n";
+	}
+
+	rusage ts;
+	timeval end;
+	timeval wallclock;
+
+	gettimeofday(&end, nullptr);
+	timersub(&end, &std::get<1>(process), &wallclock);
+
+	if (-1 != getrusage(RUSAGE_CHILDREN, &ts))
+	{
+		char tmbuf[64];
+		timeval tv;
+		timeradd(&ts.ru_utime, &ts.ru_stime, &tv);
+		std::cout << '\n';
+		strftime(tmbuf, 64, "%s", localtime(&tv.tv_sec));
+		printf("CPU time: %s.%06ld seconds\n", tmbuf, tv.tv_usec);
+		strftime(tmbuf, sizeof tmbuf, "%s", localtime(&wallclock.tv_sec));
+		printf("Wall-clock time: %s.%06ld seconds\n", tmbuf, wallclock.tv_usec);
+		printf("Voluntary context switches: %ld\n", ts.ru_nvcsw);
+		printf("Involuntary context switches: %ld\n", ts.ru_nivcsw);
+		printf("Page reclaims (soft page faults): %ld\n", ts.ru_minflt);
+		printf("Page faults (hard page faults): %ld\n", ts.ru_majflt);
+		std::cout << '\n';
+	}
+
+	if (WIFEXITED(status))
+	{
+		return WEXITSTATUS(status);
+	}
+	return -1;
+}
 
 process_info launch_cmd(std::vector<std::string> args)
 {
@@ -60,43 +106,26 @@ process_info launch_cmd(std::vector<std::string> args)
 	}
 }
 
-int wait_cmd(process_info process)
+bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
 {
-	int status;
-	if (-1 == waitpid(std::get<0>(process), &status, 0))
-	{
-		std::cerr << "Error on wait(): " << strerror(errno) << "\n";
-	}
+    auto info = launch_cmd(args);
 
-	rusage ts;
-	timeval end;
-	timeval wallclock;
+    timeval t;
+    gettimeofday(&t, nullptr);
 
-	gettimeofday(&end, nullptr);
-	timersub(&end, &std::get<1>(process), &wallclock);
+    switch (fork())
+    {
+        case -1: // Error
+            std::cerr << "Error on fork(): " << strerror(errno) << "\n";
+            return bg_task(-2, info);
 
-	if (-1 != getrusage(RUSAGE_CHILDREN, &ts))
-	{
-		char tmbuf[64];
-		timeval tv;
-		timeradd(&ts.ru_utime, &ts.ru_stime, &tv);
-		std::cout << '\n';
-		strftime(tmbuf, 64, "%s", localtime(&tv.tv_sec));
-		printf("CPU time: %s.%06ld seconds\n", tmbuf, tv.tv_usec);
-		strftime(tmbuf, sizeof tmbuf, "%s", localtime(&wallclock.tv_sec));
-		printf("Wall-clock time: %s.%06ld seconds\n", tmbuf, wallclock.tv_usec);
-		printf("Voluntary context switches: %ld\n", ts.ru_nvcsw);
-		printf("Involuntary context switches: %ld\n", ts.ru_nivcsw);
-		printf("Page reclaims (soft page faults): %ld\n", ts.ru_minflt);
-		printf("Page faults (hard page faults): %ld\n", ts.ru_majflt);
-		std::cout << '\n';
-	}
-
-	if (WIFEXITED(status))
-	{
-		return WEXITSTATUS(status);
-	}
-	return -1;
+        case 0: // Child process
+            wait_cmd(info);
+            std::exit(EXIT_SUCCESS);
+            break;
+        default: // Parent process
+            return bg_task(process_id, process_info(-1, t));
+    }
 }
 
 void cd(std::string dir)
@@ -147,7 +176,9 @@ int main(int /* argc */, char* /* argv */[])
 				if (args.back() == "&")
 				{
 					args.pop_back();
-					bg_tasks.push_back(bg_task(next_task_id++, launch_cmd(args)));
+                    auto task = bg_task(next_task_id++, launch_cmd(args));
+                    std::cout << task << std::endl;
+					bg_tasks.push_back(task);
 				}
 				else if (args[0] == "cd")
 				{
@@ -157,7 +188,7 @@ int main(int /* argc */, char* /* argv */[])
 				{
 					for (auto x : bg_tasks)
 					{
-						std::cout << "[" << std::get<0>(x) << "] " << std::get<0>(std::get<1>(x)) << "\n";
+						std::cout << x << std::endl;
 					}
 				}
 				else
