@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <termios.h> // terminos(), tcgetattr(), tcsetattr()
 #include <unistd.h>
 
 #include <algorithm>
@@ -107,13 +108,158 @@ void cd(std::string dir)
 	}
 }
 
+void read_line(int fd) {
+    
+}
+
 int main(int /* argc */, char* /* argv */[])
 {
+    int err;
+    termios buf;
+    termios old;
+
+    if (tcgetattr(STDIN_FILENO, &buf) < 0)
+    {
+        write(STDOUT_FILENO, "a", 1);
+        std::exit(EXIT_FAILURE);
+    }
+
+    old = buf;
+
+    buf.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    buf.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    buf.c_cflag &= ~(CSIZE | PARENB);
+    buf.c_cflag &= CS8;
+    buf.c_oflag &= ~OPOST;
+    buf.c_cc[VMIN] = 0;
+    buf.c_cc[VTIME] = 1;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &buf) < 0)
+    {
+        write(STDOUT_FILENO, "b", 1);
+        std::exit(EXIT_FAILURE);
+    }
+
+    if (tcgetattr(STDIN_FILENO, &buf) < 0)
+    {
+        write(STDOUT_FILENO, "c", 1);
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+        std::exit(EXIT_FAILURE);
+    }
+
+    if ((buf.c_lflag & (ECHO | ICANON | IEXTEN | ISIG))
+        || (buf.c_iflag & (BRKINT | ICRNL | INPCK | ISTRIP | IXON))
+        || (buf.c_cflag & (CSIZE | PARENB | CS8)) != CS8
+        || (buf.c_oflag & OPOST)
+        || buf.c_cc[VMIN] != 0
+        || buf.c_cc[VTIME] != 1)
+    {
+        write(STDOUT_FILENO, "d", 1);
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+        std::exit(EXIT_FAILURE);
+    }
+
+    std::string line;
+    bool end_of_file = false;
+    while (!end_of_file)
+    {
+        char c;
+        if (read(STDIN_FILENO, &c, 1) == 1)
+        {
+            switch (c)
+            {
+                case 0x04:
+                    end_of_file = true;
+                    break;
+                case '\n':
+                case '\r':
+                    if (line == "exit")
+                    {
+                        write(STDOUT_FILENO, "\r\n", 2);
+                        end_of_file = true;
+                    }
+                    else
+                    {
+                        auto is_whitespace = [](char c)
+                        {
+                            return std::isspace(c) != 0;
+                        };
+                        auto begin = std::find_if_not(line.begin(), line.end(), is_whitespace);
+                        auto end = line.end();
+                        auto result = begin;
+                        std::vector<std::string> args;
+                        while (begin != end)
+                        {
+                            result = std::find(begin, end, ' ');
+                            args.emplace_back(begin, result);
+                            begin = std::find_if_not(result, end, is_whitespace);
+                        }
+
+                        if (not args.empty())
+                        {
+                            if (args.back() == "&")
+                            {
+                                args.pop_back();
+                                bg_tasks.push_back(bg_task(next_task_id++, launch_cmd(args)));
+                            }
+                            else if (args[0] == "cd")
+                            {
+                                cd(args[1]);
+                            }
+                            else if (args[0] == "aptaches")
+                            {
+                                for (auto x : bg_tasks)
+                                {
+                                    std::cout << "[" << std::get<0>(x) << "] " << std::get<0>(std::get<1>(x)) << "\n";
+                                }
+                            }
+                            else
+                            {
+                                wait_cmd(launch_cmd(args));
+                            }
+                        }
+                    }
+                    
+                    break;
+                default:
+                    write(log, &c, 1);
+                    write(STDOUT_FILENO, &c, 1);
+                    line.push_back(c);
+                    break;
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(messages_mutex);
+        if (!messages.empty())
+        {
+            // Clear the current line
+            write(STDOUT_FILENO, "\r", 1);
+            for (auto dummy : line)
+                write(STDOUT_FILENO, " ", 1);
+            write(STDOUT_FILENO, "\r", 1);
+
+            while (!messages.empty())
+            {
+                write_text(messages.front());
+                messages.pop();
+            }
+
+            // Write the current line
+            write(STDOUT_FILENO, line.data(), line.size());
+        }
+    }
+
+    aquire_messages_thread.join();
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+
+    ///////////////////////////////////////////////////////////////////////////
+    // previous
+
 	timeval start;
 	gettimeofday(&start, nullptr);
 
 	auto bg_tasks = std::vector<bg_task>();
-	int next_task_id = 0;
+    int next_task_id = 0;
 
 	bool quit = false;
 	while (not quit)
@@ -167,6 +313,5 @@ int main(int /* argc */, char* /* argv */[])
 			}
 		}
 	}
-
 }
 
