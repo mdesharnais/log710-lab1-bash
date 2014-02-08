@@ -15,21 +15,30 @@
 #include <ostream>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
-using process_info = std::tuple<pid_t, timeval>;
+struct process_info
+{
+    pid_t id;
+    timeval start_timeval;
+};
+
+static_assert(std::is_pod<process_info>::value,
+    "Type 'process_info' need to be a POD type to send it via a pipe.");
+
 using bg_task = std::tuple<int, process_info>;
 
 std::ostream& operator<<(std::ostream& out, const bg_task& t)
 {
-    out << "[" << std::get<0>(t) << "] " << std::get<0>(std::get<1>(t)) << "\n";
+    out << "[" << std::get<0>(t) << "] " << std::get<1>(t).id;
     return out;
 }
 
 int wait_cmd(process_info process)
 {
 	int status;
-	if (-1 == waitpid(std::get<0>(process), &status, 0))
+	if (-1 == waitpid(process.id, &status, 0))
 	{
 		std::cerr << "Error on wait(): " << strerror(errno) << "\n";
 	}
@@ -39,7 +48,7 @@ int wait_cmd(process_info process)
 	timeval wallclock;
 
 	gettimeofday(&end, nullptr);
-	timersub(&end, &std::get<1>(process), &wallclock);
+	timersub(&end, &process.start_timeval, &wallclock);
 
 	if (-1 != getrusage(RUSAGE_CHILDREN, &ts))
 	{
@@ -74,7 +83,7 @@ process_info launch_cmd(std::vector<std::string> args)
 	{
 		case -1: // Error
 			std::cerr << "Error on fork(): " << strerror(errno) << "\n";
-			return process_info(child_pid, t);
+			return process_info{child_pid, t};
 
 		case 0: // Child process
 		{
@@ -95,36 +104,59 @@ process_info launch_cmd(std::vector<std::string> args)
 				{
 					std::cout << "'" << v << "'\n";
 				}
-				return process_info(-1, t);
+				return process_info{-1, t};
 			}
-			return process_info(-1, t);
+			return process_info{-1, t};
 		} break;
 		default: // Parent process
 		{
-			return process_info(child_pid, t);
+			return process_info{child_pid, t};
 		}
 	}
 }
 
 bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
 {
-    auto info = launch_cmd(args);
-
     timeval t;
     gettimeofday(&t, nullptr);
 
-    switch (fork())
+    int pipefd[2];
+    if (0 == pipe(pipefd))
     {
-        case -1: // Error
-            std::cerr << "Error on fork(): " << strerror(errno) << "\n";
-            return bg_task(-2, info);
+        switch (fork())
+        {
+            case -1: // Error
+            {
+                std::cerr << "Error on fork(): " << strerror(errno) << "\n";
+                return bg_task(-2, process_info{-1, t});
+            } break;
 
-        case 0: // Child process
-            wait_cmd(info);
-            std::exit(EXIT_SUCCESS);
-            break;
-        default: // Parent process
-            return bg_task(process_id, process_info(-1, t));
+            case 0: // Child process
+            {
+                close(pipefd[0]); // Close read end
+
+                auto info = launch_cmd(args);
+                write(pipefd[1], &info, sizeof(process_info));
+                wait_cmd(info);
+
+                std::exit(EXIT_SUCCESS);
+            } break;
+
+            default: // Parent process
+            {
+                close(pipefd[1]); // Close write end
+
+                process_info info;
+                read(pipefd[0], &info, sizeof(process_info));
+
+                return bg_task(process_id, info);
+            } break;
+        }
+    }
+    else
+    {
+        std::cerr << "Error on pipe(): " << strerror(errno) << "\n";
+        return bg_task(-1, process_info{-1, t});
     }
 }
 
@@ -176,7 +208,8 @@ int main(int /* argc */, char* /* argv */[])
 				if (args.back() == "&")
 				{
 					args.pop_back();
-                    auto task = bg_task(next_task_id++, launch_cmd(args));
+                    //auto task = bg_task(next_task_id++, launch_cmd(args));
+                    auto task = launch_background_cmd(next_task_id++, args);
                     std::cout << task << std::endl;
 					bg_tasks.push_back(task);
 				}
@@ -198,6 +231,4 @@ int main(int /* argc */, char* /* argv */[])
 			}
 		}
 	}
-
 }
-
