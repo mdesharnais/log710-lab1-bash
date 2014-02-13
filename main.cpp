@@ -44,8 +44,6 @@ std::ostream& operator<<(std::ostream& out, const bg_task& t)
 	return out;
 }
 
-auto bg_tasks = std::map<int, bg_task>();
-
 int wait_cmd(process_info process)
 {
 	int status;
@@ -180,21 +178,24 @@ void cd(std::string dir)
 	}
 }
 
-void check_processes()
+/* Check if processes need to be removed from bg_tasks */
+void check_processes(std::map<int, bg_task> & map)
 {
-	/* Check if processes need to be removed from bg_tasks */
-	for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
+	for (auto pair : map)
+	{
 		int status;
-		int ret = waitpid(it->second.watcher_proc.id, &status, WNOHANG);
+		int ret = waitpid(pair.second.watcher_proc.id, &status, WNOHANG);
 		if (ret == -1 || (WEXITSTATUS(status) == 0 && ret != 0))
 		{
-			bg_tasks.erase(it->second.exec_proc.id);
+			map.erase(pair.second.exec_proc.id);
 		}
 	}
 }
 
 int main(int /* argc */, char* /* argv */[])
 {
+	auto bg_tasks = std::map<int, bg_task>();
+
 	timeval start;
 	gettimeofday(&start, nullptr);
 
@@ -242,9 +243,11 @@ int main(int /* argc */, char* /* argv */[])
 				}
 				else if (args[0] == "aptaches")
 				{
-					check_processes();
-					for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
-						std::cout << it->second << std::endl;
+					check_processes(bg_tasks);
+					// for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
+					for (auto pair : bg_tasks)
+					{
+						std::cout << pair.second << std::endl;
 					}
 				}
 				else
@@ -255,9 +258,9 @@ int main(int /* argc */, char* /* argv */[])
 		}
 	}
 	/* Kill everything in bg_tasks */
-	check_processes();
-	for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
-		std::cout << "\nKilling " << it->first;
-		kill(it->second.exec_proc.id, SIGTERM);
+	check_processes(bg_tasks);
+	for (auto pair : bg_tasks)
+	{
+		kill(pair.second.exec_proc.id, SIGTERM);
 	}
 }
