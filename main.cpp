@@ -115,7 +115,7 @@ process_info launch_cmd(std::vector<std::string> args)
 				{
 					std::cout << "'" << v << "'\n";
 				}
-				return process_info{-1, t};
+				std::exit(EXIT_FAILURE);
 			}
 			return process_info{-1, t};
 		} break;
@@ -150,7 +150,6 @@ bg_task launch_background_cmd(int task_id, std::vector<std::string> args)
 				auto info = launch_cmd(args);
 				write(pipefd[1], &info, sizeof(process_info));
 				wait_cmd(info);
-				// bg_tasks.erase(info.id);
 
 				std::exit(EXIT_SUCCESS);
 			} break;
