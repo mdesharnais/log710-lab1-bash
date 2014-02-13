@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <map>
 #include <ostream>
 #include <string>
 #include <tuple>
@@ -27,13 +28,23 @@ struct process_info
 static_assert(std::is_pod<process_info>::value,
     "Type 'process_info' need to be a POD type to send it via a pipe.");
 
-using bg_task = std::tuple<int, process_info>;
+struct bg_task
+{
+	int task_id;
+	process_info watcher_proc;
+	process_info exec_proc;
+};
+static_assert(std::is_pod<bg_task>::value,
+    "Type 'bg_task' need to be a POD type to send it via a pipe.");
+
 
 std::ostream& operator<<(std::ostream& out, const bg_task& t)
 {
-    out << "[" << std::get<0>(t) << "] " << std::get<1>(t).id;
+    out << "[" << t.task_id << "] " << t.exec_proc.id;
     return out;
 }
+
+auto bg_tasks = std::map<int, bg_task>();
 
 int wait_cmd(process_info process)
 {
@@ -115,7 +126,7 @@ process_info launch_cmd(std::vector<std::string> args)
 	}
 }
 
-bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
+bg_task launch_background_cmd(int task_id, std::vector<std::string> args)
 {
     timeval t;
     gettimeofday(&t, nullptr);
@@ -123,12 +134,13 @@ bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
     int pipefd[2];
     if (0 == pipe(pipefd))
     {
-        switch (fork())
+    	pid_t watcher_pid = fork();
+        switch (watcher_pid)
         {
             case -1: // Error
             {
                 std::cerr << "Error on fork(): " << strerror(errno) << "\n";
-                return bg_task(-2, process_info{-1, t});
+                return bg_task{-2, process_info{-1, t}, process_info{}};
             } break;
 
             case 0: // Child process
@@ -138,6 +150,7 @@ bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
                 auto info = launch_cmd(args);
                 write(pipefd[1], &info, sizeof(process_info));
                 wait_cmd(info);
+                // bg_tasks.erase(info.id);
 
                 std::exit(EXIT_SUCCESS);
             } break;
@@ -149,14 +162,14 @@ bg_task launch_background_cmd(int process_id, std::vector<std::string> args)
                 process_info info;
                 read(pipefd[0], &info, sizeof(process_info));
 
-                return bg_task(process_id, info);
+                return bg_task{task_id, process_info{watcher_pid, t}, info};
             } break;
         }
     }
     else
     {
         std::cerr << "Error on pipe(): " << strerror(errno) << "\n";
-        return bg_task(-1, process_info{-1, t});
+        return bg_task{-1, process_info{-1, t}, process_info{}};
     }
 }
 
@@ -168,12 +181,24 @@ void cd(std::string dir)
 	}
 }
 
+void check_processes()
+{
+	/* Check if processes need to be removed from bg_tasks */
+	for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
+		int status;
+		int ret = waitpid(it->second.watcher_proc.id, &status, WNOHANG);
+		if (ret == -1 || (WEXITSTATUS(status) == 0 && ret != 0))
+		{
+			bg_tasks.erase(it->second.exec_proc.id);
+		}
+	}
+}
+
 int main(int /* argc */, char* /* argv */[])
 {
 	timeval start;
 	gettimeofday(&start, nullptr);
 
-	auto bg_tasks = std::vector<bg_task>();
 	int next_task_id = 0;
 
 	bool quit = false;
@@ -208,10 +233,9 @@ int main(int /* argc */, char* /* argv */[])
 				if (args.back() == "&")
 				{
 					args.pop_back();
-                    //auto task = bg_task(next_task_id++, launch_cmd(args));
                     auto task = launch_background_cmd(next_task_id++, args);
                     std::cout << task << std::endl;
-					bg_tasks.push_back(task);
+					bg_tasks[task.exec_proc.id] = task;
 				}
 				else if (args[0] == "cd")
 				{
@@ -219,9 +243,9 @@ int main(int /* argc */, char* /* argv */[])
 				}
 				else if (args[0] == "aptaches")
 				{
-					for (auto x : bg_tasks)
-					{
-						std::cout << x << std::endl;
+					check_processes();
+					for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
+						std::cout << it->second << std::endl;
 					}
 				}
 				else
@@ -230,5 +254,11 @@ int main(int /* argc */, char* /* argv */[])
 				}
 			}
 		}
+	}
+	/* Kill everything in bg_tasks */
+	check_processes();
+	for (std::map<int, bg_task>::const_iterator it=bg_tasks.begin(); it!=bg_tasks.end(); ++it) {
+		std::cout << "\nKilling " << it->first;
+		kill(it->second.exec_proc.id, SIGTERM);
 	}
 }
