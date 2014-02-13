@@ -73,8 +73,8 @@ int wait_cmd(process_info process)
 		printf("Wall-clock time: %s.%06ld seconds\n", tmbuf, wallclock.tv_usec);
 		printf("Voluntary context switches: %ld\n", ts.ru_nvcsw);
 		printf("Involuntary context switches: %ld\n", ts.ru_nivcsw);
-		printf("Page reclaims (soft page faults): %ld\n", ts.ru_minflt);
-		printf("Page faults (hard page faults): %ld\n", ts.ru_majflt);
+		printf("Page faults serviced without I/O activity: %ld\n", ts.ru_minflt);
+		printf("Page faults that required I/O activity: %ld\n", ts.ru_majflt);
 		std::cout << '\n';
 	}
 
