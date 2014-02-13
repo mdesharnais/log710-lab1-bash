@@ -21,12 +21,12 @@
 
 struct process_info
 {
-    pid_t id;
-    timeval start_timeval;
+	pid_t id;
+	timeval start_timeval;
 };
 
 static_assert(std::is_pod<process_info>::value,
-    "Type 'process_info' need to be a POD type to send it via a pipe.");
+	"Type 'process_info' need to be a POD type to send it via a pipe.");
 
 struct bg_task
 {
@@ -35,13 +35,13 @@ struct bg_task
 	process_info exec_proc;
 };
 static_assert(std::is_pod<bg_task>::value,
-    "Type 'bg_task' need to be a POD type to send it via a pipe.");
+	"Type 'bg_task' need to be a POD type to send it via a pipe.");
 
 
 std::ostream& operator<<(std::ostream& out, const bg_task& t)
 {
-    out << "[" << t.task_id << "] " << t.exec_proc.id;
-    return out;
+	out << "[" << t.task_id << "] " << t.exec_proc.id;
+	return out;
 }
 
 auto bg_tasks = std::map<int, bg_task>();
@@ -128,49 +128,49 @@ process_info launch_cmd(std::vector<std::string> args)
 
 bg_task launch_background_cmd(int task_id, std::vector<std::string> args)
 {
-    timeval t;
-    gettimeofday(&t, nullptr);
+	timeval t;
+	gettimeofday(&t, nullptr);
 
-    int pipefd[2];
-    if (0 == pipe(pipefd))
-    {
-    	pid_t watcher_pid = fork();
-        switch (watcher_pid)
-        {
-            case -1: // Error
-            {
-                std::cerr << "Error on fork(): " << strerror(errno) << "\n";
-                return bg_task{-2, process_info{-1, t}, process_info{}};
-            } break;
+	int pipefd[2];
+	if (0 == pipe(pipefd))
+	{
+		pid_t watcher_pid = fork();
+		switch (watcher_pid)
+		{
+			case -1: // Error
+			{
+				std::cerr << "Error on fork(): " << strerror(errno) << "\n";
+				return bg_task{-2, process_info{-1, t}, process_info{}};
+			} break;
 
-            case 0: // Child process
-            {
-                close(pipefd[0]); // Close read end
+			case 0: // Child process
+			{
+				close(pipefd[0]); // Close read end
 
-                auto info = launch_cmd(args);
-                write(pipefd[1], &info, sizeof(process_info));
-                wait_cmd(info);
-                // bg_tasks.erase(info.id);
+				auto info = launch_cmd(args);
+				write(pipefd[1], &info, sizeof(process_info));
+				wait_cmd(info);
+				// bg_tasks.erase(info.id);
 
-                std::exit(EXIT_SUCCESS);
-            } break;
+				std::exit(EXIT_SUCCESS);
+			} break;
 
-            default: // Parent process
-            {
-                close(pipefd[1]); // Close write end
+			default: // Parent process
+			{
+				close(pipefd[1]); // Close write end
 
-                process_info info;
-                read(pipefd[0], &info, sizeof(process_info));
+				process_info info;
+				read(pipefd[0], &info, sizeof(process_info));
 
-                return bg_task{task_id, process_info{watcher_pid, t}, info};
-            } break;
-        }
-    }
-    else
-    {
-        std::cerr << "Error on pipe(): " << strerror(errno) << "\n";
-        return bg_task{-1, process_info{-1, t}, process_info{}};
-    }
+				return bg_task{task_id, process_info{watcher_pid, t}, info};
+			} break;
+		}
+	}
+	else
+	{
+		std::cerr << "Error on pipe(): " << strerror(errno) << "\n";
+		return bg_task{-1, process_info{-1, t}, process_info{}};
+	}
 }
 
 void cd(std::string dir)
@@ -233,8 +233,8 @@ int main(int /* argc */, char* /* argv */[])
 				if (args.back() == "&")
 				{
 					args.pop_back();
-                    auto task = launch_background_cmd(next_task_id++, args);
-                    std::cout << task << std::endl;
+					auto task = launch_background_cmd(next_task_id++, args);
+					std::cout << task << std::endl;
 					bg_tasks[task.exec_proc.id] = task;
 				}
 				else if (args[0] == "cd")
